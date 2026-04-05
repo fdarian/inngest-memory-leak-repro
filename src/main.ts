@@ -1,4 +1,5 @@
-import { Effect, Exit, FiberId, Layer, Scope } from "effect";
+import { NodeRuntime } from "@effect/platform-node";
+import { Effect } from "effect";
 import { createEffectLeakFn, EFFECT_EVENT, EFFECT_FN_ID } from "./effect-fn.ts";
 import { incrementRunCount, setMode, startMonitor } from "./monitor.ts";
 import { PLAIN_EVENT, PLAIN_FN_ID, plainLeakFn } from "./plain-fn.ts";
@@ -52,19 +53,22 @@ const main = Effect.gen(function* () {
 		onRunComplete: incrementRunCount,
 	});
 
-	const cleanup = async () => {
-		stopTrigger();
-		stopMonitor();
-		server.stop();
-		process.exit(0);
-	};
+	yield* Effect.addFinalizer(() =>
+		Effect.gen(function* () {
+			stopTrigger();
+			stopMonitor();
+			server.stop();
+			console.log("Stopped");
+		}),
+	);
 
-	process.on("SIGINT", () => void cleanup());
-	process.on("SIGTERM", () => void cleanup());
 	yield* Effect.never;
 });
 
-main.pipe(Effect.scoped, Effect.runPromise).catch((err) => {
-	process.stderr.write(`Fatal error: ${String(err)}\n`);
-	process.exit(1);
-});
+main.pipe(
+	Effect.scoped,
+	Effect.catchAllCause((error) =>
+		Effect.logError("Fatal error").pipe(Effect.annotateLogs({ error })),
+	),
+	NodeRuntime.runMain,
+);
