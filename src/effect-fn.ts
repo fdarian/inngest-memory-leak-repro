@@ -24,8 +24,7 @@ export const createEffectLeakFn = () =>
 
 		return inngest.createFunction(
 			{ id: "leak-think-cron", triggers: [{ event: EFFECT_EVENT }] },
-			// biome-ignore lint/suspicious/noExplicitAny: inngest handler ctx has complex generics
-			async (ctx: any) => {
+			async (ctx) => {
 				return runPromise(
 					Effect.scoped(
 						Effect.gen(function* () {
