@@ -108,10 +108,13 @@ const redraw = () => {
     process.stdout.write('\x1b[2J\x1b[H')
     process.stdout.write(lines.join('\n') + '\n')
   } else {
+    // Bun keeps step payloads in `external` (ArrayBuffers) rather than the JS
+    // heap, so reporting heapUsed alone is misleading — include external too.
     const rss = formatBytes(mem.rss)
     const heap = formatBytes(mem.heapUsed)
+    const ext = formatBytes(mem.external)
     process.stdout.write(
-      `[${formatTime(now)}] mode=${state.mode} runs=${state.runCount} rss=${rss} heapUsed=${heap}\n`,
+      `[${formatTime(now)}] mode=${state.mode} runs=${state.runCount} rss=${rss} heapUsed=${heap} external=${ext}\n`,
     )
   }
 }

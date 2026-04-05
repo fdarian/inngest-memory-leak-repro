@@ -4,22 +4,12 @@ Minimal reproduction for [inngest/inngest-js#1440](https://github.com/inngest/in
 
 Production (Bun + Inngest SDK + Effect-TS) shows staircase memory growth of ~200–300 MB/hour correlated with an hourly cron function that has many steps and large step payloads.
 
-The Inngest maintainer (amh4r) identified two open questions this repro is meant to answer:
+This repro ships **two equivalent handlers** driving the exact same 14-step / ~12 MB-per-run workload, so we can isolate where the retention actually lives:
 
-1. **Does it reproduce on Node.js?** That would isolate whether this is Bun-specific.
-2. **What external root keeps the execution instance reachable?** The heap snapshot should let you trace the retention root — whether it's Bun's ALS implementation, Effect runtime references, or something else.
+- **`effect` mode** — uses `FiberSet.makeRuntimePromise()` + `Effect.scoped` + per-step inner `FiberSet` (the pattern the maintainer flagged and the pattern used in production).
+- **`plain` mode** — plain `async/await`, no Effect, no FiberSet. Same Inngest SDK, same client, same 14 steps, same payload sizes.
 
-## What this simulates
-
-The script replicates the exact production pattern the maintainer flagged:
-
-- `FiberSet.makeRuntimePromise()` called at function creation (outer scope)
-- `Effect.scoped` wrapping the entire handler body
-- Per-step `FiberSet.makeRuntimePromise()` inside `step.run` callbacks
-- Nested `FiberSet.makeRuntimePromise()` inside some steps (agent-tool-like pattern)
-- ~14 steps total, with large step payloads (~100 KB per collect step, ~500 KB per generate step)
-
-No external Inngest dev server is required. The script simulates Inngest's replay protocol directly — POSTing step requests to the in-process Hono handler. This is the same technique used in the production codebase's own tests.
+A new simulated run fires every 5 seconds so the staircase (or the absence of one) is visible within ~30 seconds.
 
 ## Install
 
@@ -27,76 +17,64 @@ No external Inngest dev server is required. The script simulates Inngest's repla
 pnpm install
 ```
 
-## Run on Bun
+## Run
+
+Four convenience scripts — pick a runtime and a mode:
 
 ```sh
-pnpm start:bun
+pnpm start:bun:effect    # Bun + Effect handler
+pnpm start:bun:plain     # Bun + plain async/await handler
+pnpm start:node:effect   # Node + Effect handler
+pnpm start:node:plain    # Node + plain async/await handler
 ```
 
-## Run on Node
+Node scripts include `--expose-gc` (so `global.gc()` works) and `--max-old-space-size=8192` (so the process doesn't OOM before you can watch the growth).
 
-```sh
-pnpm start:node
-```
-
-Node requires `--expose-gc` to force GC before each memory snapshot. This flag is already included in the `start:node` script.
-
-## What to look for
-
-The TUI redraws every second and shows:
+## What the TUI shows
 
 ```
-Inngest Memory Leak Repro — Bun 1.x.x
-uptime: 00:02:13   runs: 7   lastGc: 14:52:03   forcedGc: yes
+Inngest Memory Leak Repro — Bun 1.3.11   mode: effect
+uptime: 00:00:19   runs: 4   lastGc: 11:34:58   forcedGc: yes
 
-RSS         182.4 MB  ▃▄▅▅▆▆▇▇██
-heapUsed     94.1 MB
-heapTotal   128.5 MB
-external      1.2 MB
-arrayBuf      0.4 MB
+RSS         726.7 MB  ▃▄▅▅▆▆▇▇██
+heapUsed     15.4 MB
+heapTotal    15.4 MB
+external    388.1 MB
+arrayBuf      0.0 MB
 
 Press Ctrl-C to exit
 ```
 
-Watch the **heapUsed** line (more reliable than RSS, since RSS can include allocator slack that never shrinks):
-
-- **Leaking runtime**: `heapUsed` climbs in a staircase pattern correlated with each completed run (every ~10 seconds), even though each snapshot is taken after a forced GC.
-- **Non-leaking runtime**: `heapUsed` stays roughly flat with a sawtooth pattern (rises during a run, falls after GC).
-
-A new simulated run starts every 10 seconds. The TUI also shows a GC marker so you can tell whether forced GC is available.
+**Which line should you watch?** On Bun, step payloads live in `external` (ArrayBuffers), so `heapUsed` alone understates the leak. On Node, the growth shows up in `heapUsed` with a smaller `external` component. The conservative metric is `heapUsed + external`; RSS is noisy because it includes allocator slack.
 
 ## Observed results
 
-Measured on this machine (macOS, M-series). Pipe the output through `tail` to see the non-TTY fallback lines.
+Measured on macOS (M-series), Bun 1.3.11 and Node v25.7.0. Each snapshot preceded by a forced GC. ~14 runs per session, 5 s between runs.
 
-**Bun 1.3.11** — 10 runs over ~90s, forced GC between each snapshot:
+| Runtime | Mode   | RSS     | heapUsed | external | Verdict               |
+| ------- | ------ | ------- | -------- | -------- | --------------------- |
+| Bun     | effect | 1.50 GB | 1.34 GB  | 1.32 GB  | **leaks** ~180 MB/run |
+| Bun     | plain  | 392 MB  | 10.1 MB  | 2.8 MB   | flat                  |
+| Node    | effect | 1.73 GB | 819 MB   | 578 MB   | **leaks** ~95 MB/run  |
+| Node    | plain  | 471 MB  | 32.1 MB  | 5.0 MB   | flat                  |
 
-```
-runs=0  heapUsed= 12.0 MB   (baseline)
-runs=1  heapUsed= 40.9 MB
-runs=8  heapUsed=182.9 MB
-runs=9  heapUsed=205.6 MB
-runs=10 heapUsed=227.1 MB
-```
-
-Growth after warmup: **~22 MB / run, linear and monotonic**.
-
-**Node v25.7.0** — 9 runs over ~90s, `--expose-gc` + `global.gc()`:
-
-```
-runs=0  heapUsed= 30.1 MB   (baseline)
-runs=1  heapUsed= 51.5 MB
-runs=7  heapUsed=158.7 MB
-runs=8  heapUsed=176.6 MB
-runs=9  heapUsed=194.6 MB
-```
-
-Growth after warmup: **~18 MB / run, linear and monotonic**.
+`plain` mode produces a textbook sawtooth: each run briefly pushes `heapUsed` to ~70 MB while the request body is parsed, then drops back to ~10 MB (Bun) or ~32 MB (Node) after GC. `effect` mode produces a monotonic staircase on both runtimes.
 
 ### What this tells us
 
-- **Not Bun-specific.** The leak reproduces on Node.js with nearly identical per-run retention (~18 MB on Node vs ~22 MB on Bun). Bun's ALS implementation is not the root cause.
-- **Retention ratio ~11–14×.** Each run serializes only ~1.6 MB of step payload (10 × 100 KB collect + 3 × 500 KB generate + a few nested strings), yet retains ~18–22 MB of heap after forced GC.
-- **GC can't collect it.** Every snapshot is preceded by `Bun.gc(true)` (Bun) or `global.gc()` (Node with `--expose-gc`).
+- **Not in the Inngest SDK.** Identical workload, identical steps, identical payload sizes, same `Inngest` client and `inngest/hono` serve handler — plain mode stays flat on both Bun and Node. The Inngest SDK itself is fine.
+- **Not Bun-specific.** The Effect-mode leak reproduces on Node.js too. Bun's ALS implementation is not the root cause. (The leak numbers differ between runtimes, but both grow monotonically.)
+- **Introduced by the Effect ↔ Inngest bridge.** Something in the `FiberSet.makeRuntimePromise()` + `Effect.scoped` + `inngest.createFunction` combination retains per-run state. Per-run retention is ~95–180 MB for a run that serialises only ~12 MB of step payload — a ~8–15× retention ratio.
+- **GC can't collect it.** Each snapshot is preceded by `Bun.gc(true)` (Bun) or `global.gc()` (Node with `--expose-gc`).
 
-The next step for debugging is capturing a heap snapshot after ~10 runs and tracing which root keeps the `V1InngestExecution` instance (or its `state.steps` map) reachable.
+The next step for debugging is capturing a heap snapshot after ~10 runs in `effect` mode and tracing which Effect-side root (FiberSet, RuntimeImpl, Fiber._observers, a lingering Scope, a captured closure in the per-step wrapper…) keeps the per-run payloads reachable. The `plain` mode gives us a control: any object class whose count grows with run count in `effect` mode but not `plain` mode is a suspect.
+
+## What this simulates (details)
+
+Both handlers run the identical step sequence:
+
+- 10 `collect-N` steps returning `{ index, data: 'x'.repeat(500_000) }` (~500 KB each)
+- 3 `generate-N` steps returning `{ index, text: ... + 'y'.repeat(2_000_000) }` (~2 MB each); the Effect version also creates a nested `FiberSet.makeRuntimePromise()` inside each generate step to mimic an "agent tool" pattern
+- 1 `store` step returning `{ stored: true }`
+
+No external Inngest dev server is required. The trigger simulates Inngest's replay protocol directly — POSTing to the in-process Hono handler with accumulated step results in the body and the `fnId` query parameter, exactly as the Inngest executor would.
