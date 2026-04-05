@@ -1,29 +1,30 @@
 {
-  "name": "inngest-memory-leak-repro",
-  "version": "1.0.0",
-  "description": "Minimal reproduction for inngest/inngest-js#1440 — Bun + Inngest + Effect-TS memory leak",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "start:bun:effect": "MODE=effect bun run src/main.ts",
-    "start:bun:plain": "MODE=plain bun run src/main.ts",
-    "start:node:effect": "MODE=effect node --expose-gc --max-old-space-size=8192 --import tsx src/main.ts",
-    "start:node:plain": "MODE=plain node --expose-gc --max-old-space-size=8192 --import tsx src/main.ts",
-    "typecheck": "tsc --noEmit"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "packageManager": "pnpm@10.33.0",
-  "dependencies": {
-    "@hono/node-server": "^1.19.12",
-    "effect": "^3.21.0",
-    "hono": "^4.12.10",
-    "inngest": "^4.1.2"
-  },
-  "devDependencies": {
-    "@types/node": "^25.5.2",
-    "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
-  }
+	"name": "inngest-memory-leak-repro",
+	"version": "1.0.0",
+	"description": "Minimal reproduction for inngest/inngest-js#1440 — Bun + Inngest + Effect-TS memory leak",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"start:bun:effect": "MODE=effect bun run src/main.ts",
+		"start:bun:plain": "MODE=plain bun run src/main.ts",
+		"start:node:effect": "MODE=effect node --expose-gc --max-old-space-size=8192 --import tsx src/main.ts",
+		"start:node:plain": "MODE=plain node --expose-gc --max-old-space-size=8192 --import tsx src/main.ts",
+		"typecheck": "tsc --noEmit"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC",
+	"packageManager": "pnpm@10.33.0",
+	"dependencies": {
+		"@hono/node-server": "^1.19.12",
+		"effect": "^3.21.0",
+		"hono": "^4.12.10",
+		"inngest": "^4.1.2"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.10",
+		"@types/node": "^25.5.2",
+		"tsx": "^4.21.0",
+		"typescript": "^6.0.2"
+	}
 }
