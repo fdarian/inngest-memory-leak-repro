@@ -3,7 +3,10 @@ const g = globalThis as any;
 
 export const isBun: boolean = typeof g.Bun !== "undefined";
 
+const gcDisabled = process.env.NO_GC === "1";
+
 export const forceGc = (): boolean => {
+	if (gcDisabled) return false;
 	if (isBun) {
 		g.Bun.gc(true);
 		return true;
