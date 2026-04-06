@@ -5,6 +5,7 @@ const RING_SIZE = 60;
 
 type MonitorState = {
 	rssSamples: number[];
+	totalSamples: number[];
 	runCount: number;
 	lastGcTime: string;
 	gcAvailable: boolean;
@@ -14,6 +15,7 @@ type MonitorState = {
 
 const state: MonitorState = {
 	rssSamples: [],
+	totalSamples: [],
 	runCount: 0,
 	lastGcTime: "--:--:--",
 	gcAvailable: true,
@@ -111,13 +113,20 @@ const redraw = () => {
 	const heapStats = getHeapStats();
 	const now = new Date();
 
+	const total = heapStats.heapUsed + heapStats.external;
+
 	state.lastGcTime = formatTime(now);
 	state.rssSamples.push(rss);
 	if (state.rssSamples.length > RING_SIZE) {
 		state.rssSamples.shift();
 	}
+	state.totalSamples.push(total);
+	if (state.totalSamples.length > RING_SIZE) {
+		state.totalSamples.shift();
+	}
 
 	const sparkline = buildSparkline(state.rssSamples);
+	const totalSparkline = buildSparkline(state.totalSamples);
 	const uptime = formatUptime(Date.now() - state.startTime);
 	const runtimeLabel = getRuntimeLabel();
 
@@ -133,6 +142,9 @@ const redraw = () => {
 		`uptime: ${uptime}   runs: ${state.runCount}   ${gcStatus}`,
 		"",
 		`${padRight("RSS", 12)}${padRight(formatBytes(rss), 12)}${sparkline}`,
+		"",
+		`${padRight("total", 12)}${padRight(formatBytes(total), 12)}${totalSparkline}`,
+		"",
 		`${padRight("heapUsed", 12)}${formatBytes(heapStats.heapUsed)}`,
 		`${padRight("heapTotal", 12)}${formatBytes(heapStats.heapTotal)}`,
 		`${padRight("external", 12)}${formatBytes(heapStats.external)}`,
@@ -148,7 +160,7 @@ const redraw = () => {
 		// Bun keeps step payloads in `external` (ArrayBuffers) rather than the JS
 		// heap, so reporting heapUsed alone is misleading — include external too.
 		process.stdout.write(
-			`[${formatTime(now)}] mode=${state.mode} runs=${state.runCount} rss=${formatBytes(rss)} heapUsed=${formatBytes(heapStats.heapUsed)} external=${formatBytes(heapStats.external)}\n`,
+			`[${formatTime(now)}] mode=${state.mode} runs=${state.runCount} rss=${formatBytes(rss)} total=${formatBytes(total)} heapUsed=${formatBytes(heapStats.heapUsed)} external=${formatBytes(heapStats.external)}\n`,
 		);
 	}
 };
