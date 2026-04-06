@@ -1,4 +1,4 @@
-import { forceGc, getRuntimeLabel } from "./runtime.ts";
+import { forceGc, getRuntimeLabel, isBun } from "./runtime.ts";
 
 const SPARKLINE_CHARS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
 const RING_SIZE = 60;
@@ -67,17 +67,52 @@ const buildSparkline = (samples: number[]): string => {
 
 const padRight = (s: string, len: number): string => s.padEnd(len, " ");
 
+type HeapStats = {
+	heapUsed: number;
+	heapTotal: number;
+	external: number;
+	arrayBuffers: number;
+};
+
+const getHeapStats = (): HeapStats => {
+	if (isBun) {
+		// eslint-disable-next-line @typescript-eslint/no-require-imports
+		const jsc = require("bun:jsc") as {
+			heapStats: () => {
+				heapSize: number;
+				heapCapacity: number;
+				extraMemorySize: number;
+			};
+		};
+		const stats = jsc.heapStats();
+		return {
+			heapUsed: stats.heapSize,
+			heapTotal: stats.heapCapacity,
+			external: stats.extraMemorySize,
+			arrayBuffers: 0,
+		};
+	}
+	const mem = process.memoryUsage();
+	return {
+		heapUsed: mem.heapUsed,
+		heapTotal: mem.heapTotal,
+		external: mem.external,
+		arrayBuffers: mem.arrayBuffers,
+	};
+};
+
 const redraw = () => {
 	const gcAvailable = forceGc();
 	if (!gcAvailable) {
 		state.gcAvailable = false;
 	}
 
-	const mem = process.memoryUsage();
+	const rss = process.memoryUsage().rss;
+	const heapStats = getHeapStats();
 	const now = new Date();
 
 	state.lastGcTime = formatTime(now);
-	state.rssSamples.push(mem.rss);
+	state.rssSamples.push(rss);
 	if (state.rssSamples.length > RING_SIZE) {
 		state.rssSamples.shift();
 	}
@@ -97,11 +132,11 @@ const redraw = () => {
 		`\x1b[1mInngest Memory Leak Repro — ${runtimeLabel}   mode: ${modeLabel}\x1b[0m`,
 		`uptime: ${uptime}   runs: ${state.runCount}   ${gcStatus}`,
 		"",
-		`${padRight("RSS", 12)}${padRight(formatBytes(mem.rss), 12)}${sparkline}`,
-		`${padRight("heapUsed", 12)}${formatBytes(mem.heapUsed)}`,
-		`${padRight("heapTotal", 12)}${formatBytes(mem.heapTotal)}`,
-		`${padRight("external", 12)}${formatBytes(mem.external)}`,
-		`${padRight("arrayBuf", 12)}${formatBytes(mem.arrayBuffers)}`,
+		`${padRight("RSS", 12)}${padRight(formatBytes(rss), 12)}${sparkline}`,
+		`${padRight("heapUsed", 12)}${formatBytes(heapStats.heapUsed)}`,
+		`${padRight("heapTotal", 12)}${formatBytes(heapStats.heapTotal)}`,
+		`${padRight("external", 12)}${formatBytes(heapStats.external)}`,
+		`${padRight("arrayBuf", 12)}${formatBytes(heapStats.arrayBuffers)}`,
 		"",
 		"Press Ctrl-C to exit",
 	];
@@ -112,11 +147,8 @@ const redraw = () => {
 	} else {
 		// Bun keeps step payloads in `external` (ArrayBuffers) rather than the JS
 		// heap, so reporting heapUsed alone is misleading — include external too.
-		const rss = formatBytes(mem.rss);
-		const heap = formatBytes(mem.heapUsed);
-		const ext = formatBytes(mem.external);
 		process.stdout.write(
-			`[${formatTime(now)}] mode=${state.mode} runs=${state.runCount} rss=${rss} heapUsed=${heap} external=${ext}\n`,
+			`[${formatTime(now)}] mode=${state.mode} runs=${state.runCount} rss=${formatBytes(rss)} heapUsed=${formatBytes(heapStats.heapUsed)} external=${formatBytes(heapStats.external)}\n`,
 		);
 	}
 };
