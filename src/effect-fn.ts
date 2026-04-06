@@ -1,31 +1,28 @@
-import { Effect, FiberSet } from "effect";
+import { Effect } from "effect";
 import { inngest } from "./client.ts";
 
 export const EFFECT_FN_ID = "leak-repro-leak-think-cron";
 export const EFFECT_EVENT = "leak/run";
 
-const wrapStepRun = <A, E, R>(
+const wrapStepRun = <A, E>(
 	step: { run: (id: string, fn: () => Promise<unknown>) => Promise<unknown> },
 	id: string,
-	effect: Effect.Effect<A, E, R>,
+	effect: Effect.Effect<A, E>,
 ) =>
 	Effect.gen(function* () {
-		const runPromise = yield* FiberSet.makeRuntimePromise<R>();
 		return (yield* Effect.promise(() =>
-			step.run(id, () => runPromise(effect)),
+			step.run(id, () => Effect.runPromise(effect)),
 		)) as A;
 	});
 
 // Mimics production: 14 steps with large payloads.
-// collect steps ~500KB each, generate steps ~2MB each, with nested FiberSet.
+// collect steps ~500KB each, generate steps ~2MB each
 export const createEffectLeakFn = () =>
 	Effect.gen(function* () {
-		const runPromise = yield* FiberSet.makeRuntimePromise();
-
 		return inngest.createFunction(
 			{ id: "leak-think-cron", triggers: [{ event: EFFECT_EVENT }] },
 			async (ctx) => {
-				return runPromise(
+				return Effect.runPromise(
 					Effect.scoped(
 						Effect.gen(function* () {
 							for (let i = 0; i < 10; i++) {
@@ -43,11 +40,10 @@ export const createEffectLeakFn = () =>
 									ctx.step,
 									`generate-${i}`,
 									Effect.gen(function* () {
-										const inner = yield* FiberSet.makeRuntimePromise();
 										const chunks = yield* Effect.promise(async () => {
 											const out: string[] = [];
 											for (let k = 0; k < 3; k++) {
-												const r = await inner(
+												const r = await Effect.runPromise(
 													Effect.succeed("t".repeat(100_000)),
 												);
 												out.push(r as string);
